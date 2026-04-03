@@ -772,6 +772,7 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                     session.getKeycloakSessionFactory(), ctx.getLdapModel());
 
             Assert.assertEquals("Sync should report 0 failed users after fix", 0, result.getFailed());
+            Assert.assertEquals("Linked user must not be counted as added", 0, result.getAdded());
         });
 
         // Step 4: verify the local user is now linked to LDAP and all existing data is preserved.

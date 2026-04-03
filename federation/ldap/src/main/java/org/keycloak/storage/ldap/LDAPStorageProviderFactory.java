@@ -52,7 +52,6 @@ import org.keycloak.storage.UserStorageProvider;
 import org.keycloak.storage.UserStorageProviderFactory;
 import org.keycloak.storage.UserStorageProviderModel;
 import org.keycloak.storage.UserStorageUtil;
-import org.keycloak.storage.ldap.LDAPConfig;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
 import org.keycloak.storage.ldap.idm.query.Condition;
 import org.keycloak.storage.ldap.idm.query.internal.LDAPQuery;

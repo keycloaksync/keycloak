@@ -679,7 +679,11 @@ public class LDAPStorageProvider implements UserStorageProvider,
         if (userCache != null) {
             userCache.evict(realm, localUser);
         }
+        // Preserve the admin-managed enabled state — doImportUser() unconditionally sets enabled=true
+        // which is correct for new imports but must not silently re-enable a deliberately disabled account.
+        boolean wasEnabled = localUser.isEnabled();
         doImportUser(realm, localUser, ldapUser);
+        localUser.setEnabled(wasEnabled);
         logger.debugf("Linked existing local user '%s' to LDAP federation provider '%s'",
                 localUser.getUsername(), model.getName());
     }
