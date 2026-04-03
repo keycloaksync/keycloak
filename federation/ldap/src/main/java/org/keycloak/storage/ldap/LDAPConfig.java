@@ -23,6 +23,7 @@ import java.util.Properties;
 import java.util.Set;
 import javax.naming.directory.SearchControls;
 
+import org.jboss.logging.Logger;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.models.LDAPConstants;
 import org.keycloak.storage.UserStorageProvider;
@@ -34,6 +35,8 @@ import static org.keycloak.storage.UserStorageProviderModel.IMPORT_ENABLED;
  *
  */
 public class LDAPConfig {
+
+    private static final Logger logger = Logger.getLogger(LDAPConfig.class);
 
     public static final String DEFAULT_CONNECTION_TIMEOUT = "5000";
 
@@ -269,6 +272,8 @@ public class LDAPConfig {
         try {
             return ExistingUserHandling.valueOf(value.toUpperCase());
         } catch (IllegalArgumentException e) {
+            logger.warnf("Unrecognised value '%s' for '%s' — falling back to %s. Valid values: LINK, SKIP, FAIL.",
+                    value, EXISTING_USER_HANDLING, ExistingUserHandling.LINK);
             return ExistingUserHandling.LINK;
         }
     }

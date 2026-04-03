@@ -809,4 +809,108 @@ public class LDAPSyncTest extends AbstractLDAPTest {
             }
         });
     }
+
+    /**
+     * When existingUserHandling is set to SKIP, a full sync must not fail and must not link the
+     * local user — the conflict is silently skipped with a warning log. Failure counters must
+     * remain at zero so that scheduled sync alerts are not triggered by a deliberate policy choice.
+     */
+    @Test
+    public void testSyncSkipsExistingLocalUserWhenSkipConfigured() {
+        // Set provider to SKIP mode
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(ctx.getRealm());
+            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "SKIP");
+            ctx.getRealm().updateComponent(ldapModel);
+        });
+
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "skipuser", "skipuser@local.org", "localpassword");
+            LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
+                    "skipuser", "Skip", "User", "skipuser@ldap.org", null, "998");
+        });
+
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                    session.getKeycloakSessionFactory(), ctx.getLdapModel());
+
+            Assert.assertEquals("SKIP mode must not report any failures", 0, result.getFailed());
+        });
+
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                    .getUserByUsername(ctx.getRealm(), "skipuser");
+            Assert.assertNotNull(localUser);
+            Assert.assertNull("SKIP mode must leave federation link unset", localUser.getFederationLink());
+        });
+
+        // Cleanup + restore LINK as default
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            RealmModel appRealm = ctx.getRealm();
+            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "skipuser");
+            if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+            LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
+                    ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "skipuser");
+            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
+            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
+            appRealm.updateComponent(ldapModel);
+        });
+    }
+
+    /**
+     * When existingUserHandling is set to FAIL, a full sync must count the conflicting user as
+     * failed and leave the local user without a federation link — preserving the original strict
+     * behaviour for operators who want explicit control over identity merging.
+     */
+    @Test
+    public void testSyncFailsExistingLocalUserWhenFailConfigured() {
+        // Set provider to FAIL mode
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(ctx.getRealm());
+            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "FAIL");
+            ctx.getRealm().updateComponent(ldapModel);
+        });
+
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "failuser", "failuser@local.org", "localpassword");
+            LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
+                    "failuser", "Fail", "User", "failuser@ldap.org", null, "997");
+        });
+
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                    session.getKeycloakSessionFactory(), ctx.getLdapModel());
+
+            Assert.assertEquals("FAIL mode must count the conflicting user as failed", 1, result.getFailed());
+        });
+
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                    .getUserByUsername(ctx.getRealm(), "failuser");
+            Assert.assertNotNull(localUser);
+            Assert.assertNull("FAIL mode must leave federation link unset", localUser.getFederationLink());
+        });
+
+        // Cleanup + restore LINK as default
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            RealmModel appRealm = ctx.getRealm();
+            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "failuser");
+            if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+            LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
+                    ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "failuser");
+            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
+            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
+            appRealm.updateComponent(ldapModel);
+        });
+    }
 }

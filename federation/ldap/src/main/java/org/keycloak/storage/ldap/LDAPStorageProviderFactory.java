@@ -713,7 +713,7 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
                                     // Link directly — do NOT touch exists.value, as this user is pre-existing
                                     // and must never be deleted by the error-recovery path on exception.
                                     ldapFedProvider.linkLocalUserToLDAP(currentRealm, currentUser, ldapUser);
-                                    syncResult.increaseAdded();
+                                    syncResult.increaseUpdated();
                                 } else if (handling == LDAPConfig.ExistingUserHandling.SKIP) {
                                     // Deliberate policy — do not count as failure, just log
                                     logger.warnf("Skipping sync for user '%s': a local user exists without a federation link. " +
