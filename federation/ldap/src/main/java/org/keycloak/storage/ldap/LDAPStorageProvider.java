@@ -668,6 +668,22 @@ public class LDAPStorageProvider implements UserStorageProvider,
         return importUserFromLDAP(session, realm, ldapUser, ImportType.FORCED);
     }
 
+    /**
+     * Links an existing local user (one with no federation link) to this LDAP provider.
+     * Unlike importUserFromLDAP(), this method never creates or deletes a user — it only
+     * sets the federation attributes on a user that already exists. Safe to call for
+     * pre-existing users where any exception must NOT trigger user deletion.
+     */
+    protected void linkLocalUserToLDAP(RealmModel realm, UserModel localUser, LDAPObject ldapUser) {
+        UserCache userCache = UserStorageUtil.userCache(session);
+        if (userCache != null) {
+            userCache.evict(realm, localUser);
+        }
+        doImportUser(realm, localUser, ldapUser);
+        logger.debugf("Linked existing local user '%s' to LDAP federation provider '%s'",
+                localUser.getUsername(), model.getName());
+    }
+
     private void doImportUser(final RealmModel realm, final UserModel user, final LDAPObject ldapUser) {
         user.setEnabled(true);
 

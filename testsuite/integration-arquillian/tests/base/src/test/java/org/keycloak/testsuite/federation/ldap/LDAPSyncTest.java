@@ -732,21 +732,15 @@ public class LDAPSyncTest extends AbstractLDAPTest {
     }
 
     /**
-     * Reproduces https://github.com/keycloak/keycloak/issues/23835
+     * Regression test for https://github.com/keycloak/keycloak/issues/23835
      *
      * When a local Keycloak user exists without a federation link and the same username exists in LDAP,
-     * a full sync currently fails to import that user (counts as "failed") instead of linking the
-     * existing local user to its LDAP counterpart.
-     *
-     * This test demonstrates the current broken behavior: sync fails for the conflicting user,
-     * the local user is left without a federation link, and any credentials or role assignments
-     * on the local user are preserved only by accident (the user was never touched).
-     *
-     * Expected behavior after fix: sync succeeds, the local user is linked to LDAP (federationLink set),
-     * and existing credentials/role assignments are preserved.
+     * a full sync with the default LINK handling must link the existing local user to its LDAP
+     * counterpart — preserving OTP credentials, role assignments, and group memberships — rather
+     * than counting the user as a sync failure.
      */
     @Test
-    public void testSyncFailsWhenLocalUserExistsWithSameUsername() {
+    public void testSyncLinksExistingLocalUserToLDAPProvider() {
         // Step 1: create a local user that pre-dates LDAP federation being added.
         // Assign a realm role to simulate real-world state that must be preserved.
         testingClient.server().run(session -> {
