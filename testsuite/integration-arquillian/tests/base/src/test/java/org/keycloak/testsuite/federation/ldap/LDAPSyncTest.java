@@ -757,58 +757,64 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                     localUser.getFederationLink());
         });
 
-        // Step 2: the same username also exists in LDAP (e.g. added via AD before federation was configured)
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
-                    "preexisting", "Pre", "Existing", "preexisting@ldap.org", null, "999");
-        });
+        try {
+            // Step 2: clear the LDAP directory and add only "preexisting", so the full sync
+            // processes exactly one user and result counters are deterministic.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                LDAPStorageProvider ldapProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapProvider, ctx.getRealm());
+                LDAPTestUtils.addLDAPUser(ldapProvider, ctx.getRealm(),
+                        "preexisting", "Pre", "Existing", "preexisting@ldap.org", null, "999");
+            });
 
-        // Step 3: run a full sync — the fix should link the existing local user instead of failing.
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
+            // Step 3: run a full sync — the fix should link the existing local user instead of failing.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
 
-            SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
-                    session.getKeycloakSessionFactory(), ctx.getLdapModel());
+                SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                        session.getKeycloakSessionFactory(), ctx.getLdapModel());
 
-            Assert.assertEquals("Sync should report 0 failed users after fix", 0, result.getFailed());
-            Assert.assertEquals("Linked user must not be counted as added", 0, result.getAdded());
-        });
+                Assert.assertEquals("Sync should report 0 failed users after fix", 0, result.getFailed());
+                Assert.assertEquals("Linked user must not be counted as added", 0, result.getAdded());
+                Assert.assertEquals("Linked user should be counted as updated", 1, result.getUpdated());
+            });
 
-        // Step 4: verify the local user is now linked to LDAP and all existing data is preserved.
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            RealmModel appRealm = ctx.getRealm();
+            // Step 4: verify the local user is now linked to LDAP and all existing data is preserved.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
 
-            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
-                    .getUserByUsername(appRealm, "preexisting");
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(appRealm, "preexisting");
 
-            Assert.assertNotNull("Local user should still exist after sync", localUser);
-            Assert.assertNotNull("Local user should now have a federation link",
-                    localUser.getFederationLink());
-            Assert.assertEquals("Federation link should point to the LDAP provider",
-                    ctx.getLdapModel().getId(), localUser.getFederationLink());
-            Assert.assertTrue("Role assignment on local user should be preserved",
-                    localUser.hasRole(appRealm.getRole("preexisting-role")));
-        });
+                Assert.assertNotNull("Local user should still exist after sync", localUser);
+                Assert.assertNotNull("Local user should now have a federation link",
+                        localUser.getFederationLink());
+                Assert.assertEquals("Federation link should point to the LDAP provider",
+                        ctx.getLdapModel().getId(), localUser.getFederationLink());
+                Assert.assertTrue("Role assignment on local user should be preserved",
+                        localUser.hasRole(appRealm.getRole("preexisting-role")));
+            });
+        } finally {
+            // Cleanup — always runs so subsequent tests see a clean realm.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
 
-        // Cleanup
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            RealmModel appRealm = ctx.getRealm();
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(appRealm, "preexisting");
+                if (localUser != null) {
+                    UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+                }
+                LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
+                        ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "preexisting");
 
-            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
-                    .getUserByUsername(appRealm, "preexisting");
-            if (localUser != null) {
-                UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
-            }
-            LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
-                    ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "preexisting");
-
-            if (appRealm.getRole("preexisting-role") != null) {
-                appRealm.removeRole(appRealm.getRole("preexisting-role"));
-            }
-        });
+                if (appRealm.getRole("preexisting-role") != null) {
+                    appRealm.removeRole(appRealm.getRole("preexisting-role"));
+                }
+            });
+        }
     }
 
     /**

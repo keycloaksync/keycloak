@@ -115,6 +115,12 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
                 .defaultValue("true")
                 .add()
                 .property().name(LDAPConfig.EXISTING_USER_HANDLING)
+                .label("Existing Local User Handling")
+                .helpText("Controls what happens during LDAP sync when a local Keycloak user already exists " +
+                        "with the same username as an LDAP user but without a federation link. " +
+                        "LINK: link the local user to the LDAP entry, preserving roles and credentials (default, recommended for migrations). " +
+                        "SKIP: log a warning and leave the local user unlinked. " +
+                        "FAIL: count the user as a sync failure; manual resolution required.")
                 .type(ProviderConfigProperty.LIST_TYPE)
                 .defaultValue(LDAPConfig.ExistingUserHandling.LINK.name())
                 .options(LDAPConfig.ExistingUserHandling.LINK.name(),
