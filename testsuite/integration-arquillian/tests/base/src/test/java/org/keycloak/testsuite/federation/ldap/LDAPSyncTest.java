@@ -826,41 +826,43 @@ public class LDAPSyncTest extends AbstractLDAPTest {
             ctx.getRealm().updateComponent(ldapModel);
         });
 
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "skipuser", "skipuser@local.org", "localpassword");
-            LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
-                    "skipuser", "Skip", "User", "skipuser@ldap.org", null, "998");
-        });
+        try {
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "skipuser", "skipuser@local.org", "localpassword");
+                LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
+                        "skipuser", "Skip", "User", "skipuser@ldap.org", null, "998");
+            });
 
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
-                    session.getKeycloakSessionFactory(), ctx.getLdapModel());
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                        session.getKeycloakSessionFactory(), ctx.getLdapModel());
 
-            Assert.assertEquals("SKIP mode must not report any failures", 0, result.getFailed());
-        });
+                Assert.assertEquals("SKIP mode must not report any failures", 0, result.getFailed());
+            });
 
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
-                    .getUserByUsername(ctx.getRealm(), "skipuser");
-            Assert.assertNotNull(localUser);
-            Assert.assertNull("SKIP mode must leave federation link unset", localUser.getFederationLink());
-        });
-
-        // Cleanup + restore LINK as default
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            RealmModel appRealm = ctx.getRealm();
-            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "skipuser");
-            if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
-            LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
-                    ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "skipuser");
-            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
-            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
-            appRealm.updateComponent(ldapModel);
-        });
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(ctx.getRealm(), "skipuser");
+                Assert.assertNotNull(localUser);
+                Assert.assertNull("SKIP mode must leave federation link unset", localUser.getFederationLink());
+            });
+        } finally {
+            // Cleanup + restore LINK as default — runs even if an assertion above fails
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "skipuser");
+                if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+                LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
+                        ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "skipuser");
+                ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
+                ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
+                appRealm.updateComponent(ldapModel);
+            });
+        }
     }
 
     /**
@@ -878,40 +880,42 @@ public class LDAPSyncTest extends AbstractLDAPTest {
             ctx.getRealm().updateComponent(ldapModel);
         });
 
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "failuser", "failuser@local.org", "localpassword");
-            LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
-                    "failuser", "Fail", "User", "failuser@ldap.org", null, "997");
-        });
+        try {
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "failuser", "failuser@local.org", "localpassword");
+                LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
+                        "failuser", "Fail", "User", "failuser@ldap.org", null, "997");
+            });
 
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
-                    session.getKeycloakSessionFactory(), ctx.getLdapModel());
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                        session.getKeycloakSessionFactory(), ctx.getLdapModel());
 
-            Assert.assertEquals("FAIL mode must count the conflicting user as failed", 1, result.getFailed());
-        });
+                Assert.assertEquals("FAIL mode must count the conflicting user as failed", 1, result.getFailed());
+            });
 
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
-                    .getUserByUsername(ctx.getRealm(), "failuser");
-            Assert.assertNotNull(localUser);
-            Assert.assertNull("FAIL mode must leave federation link unset", localUser.getFederationLink());
-        });
-
-        // Cleanup + restore LINK as default
-        testingClient.server().run(session -> {
-            LDAPTestContext ctx = LDAPTestContext.init(session);
-            RealmModel appRealm = ctx.getRealm();
-            UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "failuser");
-            if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
-            LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
-                    ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "failuser");
-            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
-            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
-            appRealm.updateComponent(ldapModel);
-        });
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(ctx.getRealm(), "failuser");
+                Assert.assertNotNull(localUser);
+                Assert.assertNull("FAIL mode must leave federation link unset", localUser.getFederationLink());
+            });
+        } finally {
+            // Cleanup + restore LINK as default
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "failuser");
+                if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+                LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
+                        ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "failuser");
+                ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
+                ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
+                appRealm.updateComponent(ldapModel);
+            });
+        }
     }
 }

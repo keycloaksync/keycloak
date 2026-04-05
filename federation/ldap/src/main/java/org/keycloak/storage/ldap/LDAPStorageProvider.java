@@ -728,6 +728,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
 
         UserModel imported = null;
         UserModel existingLocalUser = null;
+        Boolean existingUserWasEnabled = null; // non-null only when linking a pre-existing local user
         final UserProvider userProvider = UserStoragePrivateUtil.userLocalStorage(session);
         try {
             if (model.isImportEnabled()) {
@@ -756,6 +757,7 @@ public class LDAPStorageProvider implements UserStorageProvider,
                         if (handling == LDAPConfig.ExistingUserHandling.LINK) {
                             logger.debugf("Linking existing local user '%s' to LDAP federation provider '%s'",
                                     ldapUsername, model.getName());
+                            existingUserWasEnabled = localUserByUsername.isEnabled();
                             imported = localUserByUsername;
                             if (UserStorageUtil.userCache(session) != null) {
                                 UserStorageUtil.userCache(session).evict(realm, localUserByUsername);
@@ -780,6 +782,11 @@ public class LDAPStorageProvider implements UserStorageProvider,
                 imported = adapter;
             }
             doImportUser(realm, imported, ldapUser);
+            if (existingUserWasEnabled != null) {
+                // Restore the admin-managed enabled state — doImportUser() sets enabled=true
+                // unconditionally, which must not silently re-enable a deliberately disabled account.
+                imported.setEnabled(existingUserWasEnabled);
+            }
         } catch (ModelDuplicateException e) {
             logger.warnf(e, "Duplicated user importing from LDAP. LDAP Entry DN: [%s], LDAP_ID: [%s]", ldapUser.getDn(), ldapUser.getUuid());
             if (importType != ImportType.FORCED && existingLocalUser == null) {
