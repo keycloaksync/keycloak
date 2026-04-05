@@ -797,7 +797,7 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                         localUser.hasRole(appRealm.getRole("preexisting-role")));
             });
         } finally {
-            // Cleanup — always runs so subsequent tests see a clean realm.
+            // Cleanup — always runs so subsequent tests see a clean realm and full LDAP directory.
             testingClient.server().run(session -> {
                 LDAPTestContext ctx = LDAPTestContext.init(session);
                 RealmModel appRealm = ctx.getRealm();
@@ -807,11 +807,18 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                 if (localUser != null) {
                     UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
                 }
-                LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
-                        ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "preexisting");
-
                 if (appRealm.getRole("preexisting-role") != null) {
                     appRealm.removeRole(appRealm.getRole("preexisting-role"));
+                }
+
+                // Restore the base LDAP users that were wiped in step 2.
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
+                for (int i = 1; i <= 5; i++) {
+                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
+                            "user" + i, "User" + i + "FN", "User" + i + "LN",
+                            "user" + i + "@email.org", null, "12" + i);
+                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
                 }
             });
         }
@@ -833,10 +840,13 @@ public class LDAPSyncTest extends AbstractLDAPTest {
         });
 
         try {
+            // Isolate LDAP state so sync counters are deterministic: only "skipuser" is in LDAP.
             testingClient.server().run(session -> {
                 LDAPTestContext ctx = LDAPTestContext.init(session);
                 LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "skipuser", "skipuser@local.org", "localpassword");
-                LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, ctx.getRealm());
+                LDAPTestUtils.addLDAPUser(ldapFedProvider, ctx.getRealm(),
                         "skipuser", "Skip", "User", "skipuser@ldap.org", null, "998");
             });
 
@@ -846,6 +856,8 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                         session.getKeycloakSessionFactory(), ctx.getLdapModel());
 
                 Assert.assertEquals("SKIP mode must not report any failures", 0, result.getFailed());
+                Assert.assertEquals("SKIP mode must not add any users", 0, result.getAdded());
+                Assert.assertEquals("SKIP mode must not update any users", 0, result.getUpdated());
             });
 
             testingClient.server().run(session -> {
@@ -856,14 +868,22 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                 Assert.assertNull("SKIP mode must leave federation link unset", localUser.getFederationLink());
             });
         } finally {
-            // Cleanup + restore LINK as default — runs even if an assertion above fails
+            // Cleanup: remove test user, restore base LDAP users, reset config.
             testingClient.server().run(session -> {
                 LDAPTestContext ctx = LDAPTestContext.init(session);
                 RealmModel appRealm = ctx.getRealm();
                 UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "skipuser");
                 if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
-                LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
-                        ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "skipuser");
+
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
+                for (int i = 1; i <= 5; i++) {
+                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
+                            "user" + i, "User" + i + "FN", "User" + i + "LN",
+                            "user" + i + "@email.org", null, "12" + i);
+                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
+                }
+
                 ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
                 ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
                 appRealm.updateComponent(ldapModel);
@@ -887,10 +907,13 @@ public class LDAPSyncTest extends AbstractLDAPTest {
         });
 
         try {
+            // Isolate LDAP state so sync counters are deterministic: only "failuser" is in LDAP.
             testingClient.server().run(session -> {
                 LDAPTestContext ctx = LDAPTestContext.init(session);
                 LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "failuser", "failuser@local.org", "localpassword");
-                LDAPTestUtils.addLDAPUser(ctx.getLdapProvider(), ctx.getRealm(),
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, ctx.getRealm());
+                LDAPTestUtils.addLDAPUser(ldapFedProvider, ctx.getRealm(),
                         "failuser", "Fail", "User", "failuser@ldap.org", null, "997");
             });
 
@@ -900,6 +923,8 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                         session.getKeycloakSessionFactory(), ctx.getLdapModel());
 
                 Assert.assertEquals("FAIL mode must count the conflicting user as failed", 1, result.getFailed());
+                Assert.assertEquals("FAIL mode must not add any users", 0, result.getAdded());
+                Assert.assertEquals("FAIL mode must not update any users", 0, result.getUpdated());
             });
 
             testingClient.server().run(session -> {
@@ -910,14 +935,22 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                 Assert.assertNull("FAIL mode must leave federation link unset", localUser.getFederationLink());
             });
         } finally {
-            // Cleanup + restore LINK as default
+            // Cleanup: remove test user, restore base LDAP users, reset config.
             testingClient.server().run(session -> {
                 LDAPTestContext ctx = LDAPTestContext.init(session);
                 RealmModel appRealm = ctx.getRealm();
                 UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "failuser");
                 if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
-                LDAPTestUtils.removeLDAPUserByUsername(ctx.getLdapProvider(), appRealm,
-                        ctx.getLdapProvider().getLdapIdentityStore().getConfig(), "failuser");
+
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
+                for (int i = 1; i <= 5; i++) {
+                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
+                            "user" + i, "User" + i + "FN", "User" + i + "LN",
+                            "user" + i + "@email.org", null, "12" + i);
+                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
+                }
+
                 ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
                 ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
                 appRealm.updateComponent(ldapModel);

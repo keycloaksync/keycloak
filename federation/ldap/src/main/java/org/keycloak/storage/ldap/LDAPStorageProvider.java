@@ -767,7 +767,11 @@ public class LDAPStorageProvider implements UserStorageProvider,
                                     "Set 'Existing Local User Handling' to LINK to enable automatic linking.", ldapUsername);
                             return null;
                         } else {
-                            // FAIL — preserve previous exception-based behaviour but with a clear message
+                            // FAIL mode: log a clear policy-driven message first so it is the
+                            // top entry in the log when the catch block's generic warning fires.
+                            logger.warnf("User '%s' blocked from LDAP import (existingUserHandling=FAIL): " +
+                                    "a local user with the same username exists without a federation link. " +
+                                    "Set 'Existing Local User Handling' to LINK or SKIP to resolve.", ldapUsername);
                             throw new ModelDuplicateException("Cannot import LDAP user '" + ldapUsername +
                                     "': a local user with the same username exists without a federation link. " +
                                     "Set 'Existing Local User Handling' to LINK or SKIP to resolve.");
