@@ -45,7 +45,7 @@ public class LDAPConfig {
     public enum ExistingUserHandling {
         LINK,   // Link existing local user to the LDAP user — preserves OTP, credentials, roles
         SKIP,   // Log a warning and skip — local user is left unlinked
-        FAIL    // Throw an exception — admin must resolve the conflict manually
+        FAIL    // Sync: counts user as failed and moves on. Login: user is not imported (authentication will fail). Admin must resolve the conflict manually.
     }
 
     private final MultivaluedHashMap<String, String> config;

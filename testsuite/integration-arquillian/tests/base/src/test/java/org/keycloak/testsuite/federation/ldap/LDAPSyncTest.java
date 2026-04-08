@@ -810,17 +810,8 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                 if (appRealm.getRole("preexisting-role") != null) {
                     appRealm.removeRole(appRealm.getRole("preexisting-role"));
                 }
-
-                // Restore the base LDAP users that were wiped in step 2.
-                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
-                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
-                for (int i = 1; i <= 5; i++) {
-                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
-                            "user" + i, "User" + i + "FN", "User" + i + "LN",
-                            "user" + i + "@email.org", null, "12" + i);
-                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
-                }
             });
+            restoreBaseLdapUsers();
         }
     }
 
@@ -875,19 +866,11 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                 UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "skipuser");
                 if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
 
-                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
-                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
-                for (int i = 1; i <= 5; i++) {
-                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
-                            "user" + i, "User" + i + "FN", "User" + i + "LN",
-                            "user" + i + "@email.org", null, "12" + i);
-                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
-                }
-
                 ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
                 ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
                 appRealm.updateComponent(ldapModel);
             });
+            restoreBaseLdapUsers();
         }
     }
 
@@ -942,19 +925,35 @@ public class LDAPSyncTest extends AbstractLDAPTest {
                 UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "failuser");
                 if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
 
-                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
-                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
-                for (int i = 1; i <= 5; i++) {
-                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
-                            "user" + i, "User" + i + "FN", "User" + i + "LN",
-                            "user" + i + "@email.org", null, "12" + i);
-                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
-                }
-
                 ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
                 ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
                 appRealm.updateComponent(ldapModel);
             });
+            restoreBaseLdapUsers();
         }
+    }
+
+    /**
+     * Wipes the LDAP directory and re-adds the five base test users that {@code afterImportTestRealm}
+     * created. Each user is added independently so that a single failure does not prevent the
+     * remaining users from being restored.
+     */
+    private void restoreBaseLdapUsers() {
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+            RealmModel appRealm = ctx.getRealm();
+            LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
+            for (int i = 1; i <= 5; i++) {
+                try {
+                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
+                            "user" + i, "User" + i + "FN", "User" + i + "LN",
+                            "user" + i + "@email.org", null, "12" + i);
+                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
+                } catch (Exception e) {
+                    System.err.println("WARNING: failed to restore base LDAP user 'user" + i + "' during test cleanup: " + e);
+                }
+            }
+        });
     }
 }
