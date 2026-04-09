@@ -114,6 +114,19 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
                 .type(ProviderConfigProperty.BOOLEAN_TYPE)
                 .defaultValue("true")
                 .add()
+                .property().name(LDAPConfig.EXISTING_USER_HANDLING)
+                .label("Existing Local User Handling")
+                .helpText("Controls what happens during LDAP sync when a local Keycloak user already exists " +
+                        "with the same username as an LDAP user but without a federation link. " +
+                        "LINK: link the local user to the LDAP entry, preserving roles and credentials (default, recommended for migrations). " +
+                        "SKIP: log a warning and leave the local user unlinked. " +
+                        "FAIL: count the user as a sync failure; manual resolution required.")
+                .type(ProviderConfigProperty.LIST_TYPE)
+                .defaultValue(LDAPConfig.ExistingUserHandling.LINK.name())
+                .options(LDAPConfig.ExistingUserHandling.LINK.name(),
+                        LDAPConfig.ExistingUserHandling.SKIP.name(),
+                        LDAPConfig.ExistingUserHandling.FAIL.name())
+                .add()
                 .property().name(LDAPConstants.SYNC_REGISTRATIONS)
                 .type(ProviderConfigProperty.BOOLEAN_TYPE)
                 .defaultValue("false")
@@ -698,6 +711,24 @@ public class LDAPStorageProviderFactory implements UserStorageProviderFactory<LD
                                 }
                                 logger.debugf("Updated user from LDAP: %s", currentUser.getUsername());
                                 syncResult.increaseUpdated();
+                            } else if (currentUser.getFederationLink() == null) {
+                                // Local user exists without any federation link — apply configured handling
+                                LDAPConfig.ExistingUserHandling handling = ldapFedProvider.getLdapIdentityStore().getConfig().getExistingUserHandling();
+                                if (handling == LDAPConfig.ExistingUserHandling.LINK) {
+                                    // Link directly — do NOT touch exists.value, as this user is pre-existing
+                                    // and must never be deleted by the error-recovery path on exception.
+                                    ldapFedProvider.linkLocalUserToLDAP(currentRealm, currentUser, ldapUser);
+                                    syncResult.increaseUpdated();
+                                } else if (handling == LDAPConfig.ExistingUserHandling.SKIP) {
+                                    // Deliberate policy — do not count as failure, just log
+                                    logger.warnf("Skipping sync for user '%s': a local user exists without a federation link. " +
+                                            "Set 'Existing Local User Handling' to LINK to enable automatic linking.", username);
+                                } else {
+                                    // FAIL — original strict behaviour
+                                    logger.warnf("User '%s' is not updated during sync as a local user exists without a federation link to provider '%s'. " +
+                                            "Set 'Existing Local User Handling' to LINK or SKIP to resolve.", username, fedModel.getName());
+                                    syncResult.increaseFailed();
+                                }
                             } else {
                                 logger.warnf("User with ID '%s' is not updated during sync as he already exists in Keycloak database but is not linked to federation provider '%s'", ldapUser.getUuid(), fedModel.getName());
                                 syncResult.increaseFailed();

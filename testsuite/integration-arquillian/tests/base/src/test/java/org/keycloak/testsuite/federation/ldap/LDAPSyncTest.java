@@ -730,4 +730,230 @@ public class LDAPSyncTest extends AbstractLDAPTest {
             ctx.getRealm().updateComponent(mapperModel);
         });
     }
+
+    /**
+     * Regression test for https://github.com/keycloak/keycloak/issues/23835
+     *
+     * When a local Keycloak user exists without a federation link and the same username exists in LDAP,
+     * a full sync with the default LINK handling must link the existing local user to its LDAP
+     * counterpart — preserving OTP credentials, role assignments, and group memberships — rather
+     * than counting the user as a sync failure.
+     */
+    @Test
+    public void testSyncLinksExistingLocalUserToLDAPProvider() {
+        // Step 1: create a local user that pre-dates LDAP federation being added.
+        // Assign a realm role to simulate real-world state that must be preserved.
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            RealmModel appRealm = ctx.getRealm();
+
+            UserModel localUser = LDAPTestUtils.addLocalUser(session, appRealm, "preexisting", "preexisting@local.org", "localpassword");
+
+            // Assign a role so we can verify it survives (or is lost) after sync
+            appRealm.addRole("preexisting-role");
+            localUser.grantRole(appRealm.getRole("preexisting-role"));
+
+            Assert.assertNull("Local user should have no federation link before sync",
+                    localUser.getFederationLink());
+        });
+
+        try {
+            // Step 2: clear the LDAP directory and add only "preexisting", so the full sync
+            // processes exactly one user and result counters are deterministic.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                LDAPStorageProvider ldapProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapProvider, ctx.getRealm());
+                LDAPTestUtils.addLDAPUser(ldapProvider, ctx.getRealm(),
+                        "preexisting", "Pre", "Existing", "preexisting@ldap.org", null, "999");
+            });
+
+            // Step 3: run a full sync — the fix should link the existing local user instead of failing.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+
+                SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                        session.getKeycloakSessionFactory(), ctx.getLdapModel());
+
+                Assert.assertEquals("Sync should report 0 failed users after fix", 0, result.getFailed());
+                Assert.assertEquals("Linked user must not be counted as added", 0, result.getAdded());
+                Assert.assertEquals("Linked user should be counted as updated", 1, result.getUpdated());
+            });
+
+            // Step 4: verify the local user is now linked to LDAP and all existing data is preserved.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
+
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(appRealm, "preexisting");
+
+                Assert.assertNotNull("Local user should still exist after sync", localUser);
+                Assert.assertNotNull("Local user should now have a federation link",
+                        localUser.getFederationLink());
+                Assert.assertEquals("Federation link should point to the LDAP provider",
+                        ctx.getLdapModel().getId(), localUser.getFederationLink());
+                Assert.assertTrue("Role assignment on local user should be preserved",
+                        localUser.hasRole(appRealm.getRole("preexisting-role")));
+            });
+        } finally {
+            // Cleanup — always runs so subsequent tests see a clean realm and full LDAP directory.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
+
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(appRealm, "preexisting");
+                if (localUser != null) {
+                    UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+                }
+                if (appRealm.getRole("preexisting-role") != null) {
+                    appRealm.removeRole(appRealm.getRole("preexisting-role"));
+                }
+            });
+            restoreBaseLdapUsers();
+        }
+    }
+
+    /**
+     * When existingUserHandling is set to SKIP, a full sync must not fail and must not link the
+     * local user — the conflict is silently skipped with a warning log. Failure counters must
+     * remain at zero so that scheduled sync alerts are not triggered by a deliberate policy choice.
+     */
+    @Test
+    public void testSyncSkipsExistingLocalUserWhenSkipConfigured() {
+        // Set provider to SKIP mode
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(ctx.getRealm());
+            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "SKIP");
+            ctx.getRealm().updateComponent(ldapModel);
+        });
+
+        try {
+            // Isolate LDAP state so sync counters are deterministic: only "skipuser" is in LDAP.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "skipuser", "skipuser@local.org", "localpassword");
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, ctx.getRealm());
+                LDAPTestUtils.addLDAPUser(ldapFedProvider, ctx.getRealm(),
+                        "skipuser", "Skip", "User", "skipuser@ldap.org", null, "998");
+            });
+
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                        session.getKeycloakSessionFactory(), ctx.getLdapModel());
+
+                Assert.assertEquals("SKIP mode must not report any failures", 0, result.getFailed());
+                Assert.assertEquals("SKIP mode must not add any users", 0, result.getAdded());
+                Assert.assertEquals("SKIP mode must not update any users", 0, result.getUpdated());
+            });
+
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(ctx.getRealm(), "skipuser");
+                Assert.assertNotNull(localUser);
+                Assert.assertNull("SKIP mode must leave federation link unset", localUser.getFederationLink());
+            });
+        } finally {
+            // Cleanup: remove test user, restore base LDAP users, reset config.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "skipuser");
+                if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+
+                ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
+                ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
+                appRealm.updateComponent(ldapModel);
+            });
+            restoreBaseLdapUsers();
+        }
+    }
+
+    /**
+     * When existingUserHandling is set to FAIL, a full sync must count the conflicting user as
+     * failed and leave the local user without a federation link — preserving the original strict
+     * behaviour for operators who want explicit control over identity merging.
+     */
+    @Test
+    public void testSyncFailsExistingLocalUserWhenFailConfigured() {
+        // Set provider to FAIL mode
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(ctx.getRealm());
+            ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "FAIL");
+            ctx.getRealm().updateComponent(ldapModel);
+        });
+
+        try {
+            // Isolate LDAP state so sync counters are deterministic: only "failuser" is in LDAP.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                LDAPTestUtils.addLocalUser(session, ctx.getRealm(), "failuser", "failuser@local.org", "localpassword");
+                LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+                LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, ctx.getRealm());
+                LDAPTestUtils.addLDAPUser(ldapFedProvider, ctx.getRealm(),
+                        "failuser", "Fail", "User", "failuser@ldap.org", null, "997");
+            });
+
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                SynchronizationResult result = UserStoragePrivateUtil.runFullSync(
+                        session.getKeycloakSessionFactory(), ctx.getLdapModel());
+
+                Assert.assertEquals("FAIL mode must count the conflicting user as failed", 1, result.getFailed());
+                Assert.assertEquals("FAIL mode must not add any users", 0, result.getAdded());
+                Assert.assertEquals("FAIL mode must not update any users", 0, result.getUpdated());
+            });
+
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session)
+                        .getUserByUsername(ctx.getRealm(), "failuser");
+                Assert.assertNotNull(localUser);
+                Assert.assertNull("FAIL mode must leave federation link unset", localUser.getFederationLink());
+            });
+        } finally {
+            // Cleanup: remove test user, restore base LDAP users, reset config.
+            testingClient.server().run(session -> {
+                LDAPTestContext ctx = LDAPTestContext.init(session);
+                RealmModel appRealm = ctx.getRealm();
+                UserModel localUser = UserStoragePrivateUtil.userLocalStorage(session).getUserByUsername(appRealm, "failuser");
+                if (localUser != null) UserStoragePrivateUtil.userLocalStorage(session).removeUser(appRealm, localUser);
+
+                ComponentModel ldapModel = LDAPTestUtils.getLdapProviderModel(appRealm);
+                ldapModel.put(LDAPConfig.EXISTING_USER_HANDLING, "LINK");
+                appRealm.updateComponent(ldapModel);
+            });
+            restoreBaseLdapUsers();
+        }
+    }
+
+    /**
+     * Wipes the LDAP directory and re-adds the five base test users that {@code afterImportTestRealm}
+     * created. Each user is added independently so that a single failure does not prevent the
+     * remaining users from being restored.
+     */
+    private void restoreBaseLdapUsers() {
+        testingClient.server().run(session -> {
+            LDAPTestContext ctx = LDAPTestContext.init(session);
+            LDAPStorageProvider ldapFedProvider = ctx.getLdapProvider();
+            RealmModel appRealm = ctx.getRealm();
+            LDAPTestUtils.removeAllLDAPUsers(ldapFedProvider, appRealm);
+            for (int i = 1; i <= 5; i++) {
+                try {
+                    LDAPObject ldapUser = LDAPTestUtils.addLDAPUser(ldapFedProvider, appRealm,
+                            "user" + i, "User" + i + "FN", "User" + i + "LN",
+                            "user" + i + "@email.org", null, "12" + i);
+                    LDAPTestUtils.updateLDAPPassword(ldapFedProvider, ldapUser, "Password1");
+                } catch (Exception e) {
+                    System.err.println("WARNING: failed to restore base LDAP user 'user" + i + "' during test cleanup: " + e);
+                }
+            }
+        });
+    }
 }

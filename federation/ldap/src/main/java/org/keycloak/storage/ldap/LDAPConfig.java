@@ -23,6 +23,7 @@ import java.util.Properties;
 import java.util.Set;
 import javax.naming.directory.SearchControls;
 
+import org.jboss.logging.Logger;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.models.LDAPConstants;
 import org.keycloak.storage.UserStorageProvider;
@@ -35,7 +36,17 @@ import static org.keycloak.storage.UserStorageProviderModel.IMPORT_ENABLED;
  */
 public class LDAPConfig {
 
+    private static final Logger logger = Logger.getLogger(LDAPConfig.class);
+
     public static final String DEFAULT_CONNECTION_TIMEOUT = "5000";
+
+    public static final String EXISTING_USER_HANDLING = "existingUserHandling";
+
+    public enum ExistingUserHandling {
+        LINK,   // Link existing local user to the LDAP user — preserves OTP, credentials, roles
+        SKIP,   // Log a warning and skip — local user is left unlinked
+        FAIL    // Sync: counts user as failed and moves on. Login: user is not imported (authentication will fail). Admin must resolve the conflict manually.
+    }
 
     private final MultivaluedHashMap<String, String> config;
     private final Set<String> binaryAttributeNames = new HashSet<>();
@@ -250,6 +261,20 @@ public class LDAPConfig {
             return UserStorageProvider.EditMode.READ_ONLY;
         } else {
             return UserStorageProvider.EditMode.valueOf(editModeString);
+        }
+    }
+
+    public ExistingUserHandling getExistingUserHandling() {
+        String value = config.getFirst(EXISTING_USER_HANDLING);
+        if (value == null) {
+            return ExistingUserHandling.LINK;
+        }
+        try {
+            return ExistingUserHandling.valueOf(value.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            logger.warnf("Unrecognised value '%s' for '%s' — falling back to %s. Valid values: LINK, SKIP, FAIL.",
+                    value, EXISTING_USER_HANDLING, ExistingUserHandling.LINK);
+            return ExistingUserHandling.LINK;
         }
     }
 
